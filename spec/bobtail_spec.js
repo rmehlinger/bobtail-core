@@ -2152,3 +2152,42 @@ describe('.to casting', () => {
     expect(Array.from(map.toSet().raw())).toEqual([['c', 3], ['d', 4], ['joe', 'schmoe']]);
   });
 });
+
+describe('event streams', () => {
+  it('should be able to count changes', () => {
+    let src = rx.cell("");
+    let count = src.onSet.stream(rx.skipFirst(function() {
+      return this.raw() + 1;
+    }), 0);
+    expect(count.raw()).toBe(0);
+    src.set("A");
+    expect(count.raw()).toBe(1);
+    src.set("B");
+    expect(count.raw()).toBe(2);
+  });
+  it('should be accumulate changes', () => {
+    let src = rx.cell("");
+    let count = src.onSet.stream(rx.skipFirst(function([o, n]) {
+      return this.raw() + n;
+    }), "");
+    expect(count.raw()).toBe("");
+    src.set("A");
+    expect(count.raw()).toBe("A");
+    src.set("B");
+    expect(count.raw()).toBe("AB");
+    src.set("C");
+    expect(count.raw()).toBe("ABC");
+  });
+});
+
+
+describe('cell status', () => {
+  it('should work', () => {
+    let x = rx.cell(0);
+    let y = new rx.DepCell(function() {this.done(this.record(() => x.get()))});
+    expect(y.status.raw()).toBe(rx.INIT);
+    y.refresh();
+    expect(y.status.raw()).toBe(rx.LOADED);
+    y.disconnect();
+  });
+});

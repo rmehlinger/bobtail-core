@@ -62,7 +62,8 @@ export class DepMgr {
     } finally {
       this.buffering -= 1;
       if (this.buffering === 0) {
-        let immediateDeps = new Set(_.flatten(Array.from(this.events).map(({downstreamCells}) => Array.from(downstreamCells))));
+        let immediateDeps = new Set(_.flatten(Array.from(this.events).map(({downstreamCells}) =>
+          Array.from(downstreamCells))));
         let allDeps = allDownstream(...Array.from(immediateDeps || []));
         allDeps.forEach(cell => cell._shield = true);
         try {
@@ -121,15 +122,31 @@ export class Ev {
     try { return context(); }
     finally {this.unsub(uid); }
   }
+  stream(transform=_.identity, init=null) {
+    let dep = new DepCell(function(...args) {
+      let recorded = this.record(() => transform.call(this._cell, ...args));
+      if(recorded !== undefined) {
+        return this.done(recorded);
+      }
+      return this.done(this._cell.raw());
+    }, init);
+    autoSub(this, (...args) => dep._refreshArgs(...args));
+    return dep;
+  }
+  promiseStream(transform=_.identity, init=null) {
+    let promiseCell = this.stream(transform, new Promise(resolve => resolve(init)));
+    return promiseBind(init, () => promiseCell.get());
+  }
 }
 
 export let skipFirst = function(f) {
   let first = true;
   return function(...args) {
     if (first) {
-      return first = false;
+      first = false;
+      return undefined;
     } else {
-      return f(...args || []);
+      return f.apply(this, args || []);
     }
   };
 };
@@ -264,6 +281,10 @@ export let promiseBind = (init, f, catcher=() => null) => asyncBind(
   }
 );
 
+export let awaitBind = (init, f) => {
+
+};
+
 export let bind = f => asyncBind(null, function() { return this.done(this.record(f)); });
 
 export let lagBind = function(lag, init, f) {
@@ -312,6 +333,7 @@ export let subOnce = function(event, listener) {
 class ObsBase {
   constructor() {
     this.events = [];
+    this._mkEv();
   }
   flatten() { return flatten(this); }
   subAll(condFn) { if (condFn == null) { condFn = () => true; } return this.events.forEach(ev => recorder.sub(ev, condFn)); }
@@ -376,17 +398,34 @@ export class SrcCell extends ObsCell {
   set(x) {return this.update(x);}
 }
 
+export let INIT = Symbol("init");
+export let REFRESHING = Symbol("refreshing");
+export let LOADED = Symbol("loaded");
+export let DISCONNECTED = Symbol("disconnected");
+export let ERROR = Symbol("error");
+
 export class DepCell extends ObsCell {
   constructor(body, init) {
     super(init != null ? init : null);
     this.body = body != null ? body : null;
+    this.onStatusChange = this._mkEv(() => INIT);
     this.refreshing = false;
     this.nestedBinds = [];
     this.cleanups = [];
     this.upstreamEvents = new Set();
+    this._statusCell = null; // cannot immediately initialize because infinite loop
+  }
+  get status() {
+    if(!this._statusCell) {
+      this._statusCell = this.onStatusChange.stream(_.identity);
+    }
+    return this._statusCell;
   }
   refresh() {
-    if (!this.refreshing) {
+    return this._refreshArgs();
+  }
+  _refreshArgs(...args) {
+    if(!this.refreshing) {
       let old = this._base;
       // TODO we are immediately disconnecting; something that disconnects upon
       // completion may have better semantics for asynchronous operations:
@@ -402,11 +441,17 @@ export class DepCell extends ObsCell {
       // and whether on-completion is what's most generalizable.
       let realDone = _base => {
         this._base = _base;
-        return this.onSet.pub([old, this._base]);
+        try{
+          return this.onSet.pub([old, this._base]);
+        }
+        finally {
+          this.onStatusChange.pub(LOADED);
+        }
       };
       let recorded = false;
       let syncResult = null;
       let isSynchronous = false;
+      let _cell = this;
       let env = {
         // next two are for tolerating env.done calls from within env.record
         record: f => {
@@ -416,12 +461,24 @@ export class DepCell extends ObsCell {
           if (!this.refreshing) {
             let res;
             this.disconnect();
-            if (recorded) { throw new Error("this refresh has already recorded its dependencies"); }
+            if (recorded) {
+              throw new Error("this refresh has already recorded its dependencies");
+            }
             this.refreshing = true;
+            this.disconnect();
+            if (recorded) {
+              throw new Error("this refresh has already recorded its dependencies");
+            }
             recorded = true;
-            try { res = recorder.record(this, () => f.call(env)); }
-            finally {this.refreshing = false; }
-            if (isSynchronous) { realDone(syncResult); }
+            try {
+              res = recorder.record(this, () => f());
+            }
+            finally {
+              this.refreshing = false;
+            }
+            if (isSynchronous) {
+              realDone(syncResult);
+            }
             return res;
           }
         },
@@ -434,9 +491,19 @@ export class DepCell extends ObsCell {
               return realDone(x);
             }
           }
-        }
+        },
+        _cell
       };
-      return this.body.call(env);
+      let r;
+      try {
+        r = this.body.call(env, ...args);
+      }
+      catch(e) {
+        this.onStatusChange.pub(ERROR);
+        throw(e);
+      }
+      this.onStatusChange.pub(LOADED);
+      return r;
     }
   }
   // unsubscribe from all dependencies and recursively have all nested binds
@@ -452,7 +519,10 @@ export class DepCell extends ObsCell {
     this.nestedBinds = [];
     this.cleanups = [];
     this.upstreamEvents.forEach(ev => ev.downstreamCells.delete(this));
-    return this.upstreamEvents.clear();
+    this.upstreamEvents.clear();
+    if(!this.refreshing) {
+      this.onStatusChange.pub(DISCONNECTED);
+    }
   }
   // called by recorder
   addNestedBind(nestedBind) {

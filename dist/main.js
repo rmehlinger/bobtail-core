@@ -16,7 +16,7 @@
   Object.defineProperty(exports, "__esModule", {
     value: true
   });
-  exports.transaction = exports.smartUidify = exports.uidify = exports._rxUid = exports.basicDiff = exports.cellToSet = exports.cellToMap = exports.cellToArray = exports.flatten = exports.cast = exports.set = exports.map = exports.array = exports.cell = exports.autoReactify = exports.reactify = exports.unlift = exports.lift = exports.liftSpec = exports.DepSet = exports.SrcSet = exports.ObsSet = exports.DepMap = exports.SrcMap = exports.ObsMap = exports.concat = exports.IndexedArray = exports.DepArray = exports.IndexedDepArray = exports.MappedDepArray = exports.SrcArray = exports.ObsArray = exports.DepCell = exports.SrcCell = exports.ObsCell = exports.ObsBase = exports.subOnce = exports.autoSub = exports.onDispose = exports.snap = exports.postLagBind = exports.lagBind = exports.bind = exports.promiseBind = exports.asyncBind = exports.hideMutationWarnings = exports._recorder = exports.types = exports.allDownstream = exports.upstream = exports.skipFirst = exports.Ev = exports._depMgr = exports.DepMgr = undefined;
+  exports.transaction = exports.smartUidify = exports.uidify = exports._rxUid = exports.basicDiff = exports.cellToSet = exports.cellToMap = exports.cellToArray = exports.flatten = exports.cast = exports.set = exports.map = exports.array = exports.cell = exports.autoReactify = exports.reactify = exports.unlift = exports.lift = exports.liftSpec = exports.DepSet = exports.SrcSet = exports.ObsSet = exports.DepMap = exports.SrcMap = exports.ObsMap = exports.concat = exports.IndexedArray = exports.DepArray = exports.IndexedDepArray = exports.MappedDepArray = exports.SrcArray = exports.ObsArray = exports.DepCell = exports.ERROR = exports.DISCONNECTED = exports.LOADED = exports.REFRESHING = exports.INIT = exports.SrcCell = exports.ObsCell = exports.ObsBase = exports.subOnce = exports.autoSub = exports.onDispose = exports.snap = exports.postLagBind = exports.lagBind = exports.bind = exports.awaitBind = exports.promiseBind = exports.asyncBind = exports.hideMutationWarnings = exports._recorder = exports.types = exports.allDownstream = exports.upstream = exports.skipFirst = exports.Ev = exports._depMgr = exports.DepMgr = undefined;
 
   var _underscore2 = _interopRequireDefault(_underscore);
 
@@ -353,6 +353,45 @@
           this.unsub(uid);
         }
       }
+    }, {
+      key: "stream",
+      value: function stream() {
+        var transform = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : _underscore2.default.identity;
+        var init = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : null;
+
+        var dep = new DepCell(function () {
+          var _this = this;
+
+          for (var _len = arguments.length, args = Array(_len), _key = 0; _key < _len; _key++) {
+            args[_key] = arguments[_key];
+          }
+
+          var recorded = this.record(function () {
+            return transform.call.apply(transform, [_this._cell].concat(args));
+          });
+          if (recorded !== undefined) {
+            return this.done(recorded);
+          }
+          return this.done(this._cell.raw());
+        }, init);
+        autoSub(this, function () {
+          return dep._refreshArgs.apply(dep, arguments);
+        });
+        return dep;
+      }
+    }, {
+      key: "promiseStream",
+      value: function promiseStream() {
+        var transform = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : _underscore2.default.identity;
+        var init = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : null;
+
+        var promiseCell = this.stream(transform, new Promise(function (resolve) {
+          return resolve(init);
+        }));
+        return promiseBind(init, function () {
+          return promiseCell.get();
+        });
+      }
     }]);
 
     return Ev;
@@ -362,13 +401,14 @@
     var first = true;
     return function () {
       if (first) {
-        return first = false;
+        first = false;
+        return undefined;
       } else {
-        for (var _len = arguments.length, args = Array(_len), _key = 0; _key < _len; _key++) {
-          args[_key] = arguments[_key];
+        for (var _len2 = arguments.length, args = Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
+          args[_key2] = arguments[_key2];
         }
 
-        return f.apply(undefined, _toConsumableArray(args || []));
+        return f.apply(this, args || []);
       }
     };
   };
@@ -385,8 +425,8 @@
   };
 
   var allDownstreamHelper = function allDownstreamHelper() {
-    for (var _len2 = arguments.length, cells = Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
-      cells[_key2] = arguments[_key2];
+    for (var _len3 = arguments.length, cells = Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
+      cells[_key3] = arguments[_key3];
     }
 
     if (cells.length) {
@@ -399,8 +439,8 @@
   };
 
   var allDownstream = exports.allDownstream = function allDownstream() {
-    for (var _len3 = arguments.length, cells = Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
-      cells[_key3] = arguments[_key3];
+    for (var _len4 = arguments.length, cells = Array(_len4), _key4 = 0; _key4 < _len4; _key4++) {
+      cells[_key4] = arguments[_key4];
     }
 
     return Array.from(new Set([].concat(cells, _toConsumableArray(allDownstreamHelper.apply(undefined, _toConsumableArray(cells || [])))).reverse())).reverse();
@@ -455,8 +495,8 @@
           topCell.upstreamEvents.add(event);
           event.downstreamCells.add(topCell);
           return autoSub(event, function () {
-            for (var _len4 = arguments.length, evData = Array(_len4), _key4 = 0; _key4 < _len4; _key4++) {
-              evData[_key4] = arguments[_key4];
+            for (var _len5 = arguments.length, evData = Array(_len5), _key5 = 0; _key5 < _len5; _key5++) {
+              evData[_key5] = arguments[_key5];
             }
 
             if (condFn.apply(undefined, _toConsumableArray(Array.from(evData || [])))) {
@@ -541,17 +581,19 @@
       return null;
     };
     return asyncBind(init, function () {
-      var _this = this;
+      var _this2 = this;
 
       var promise = this.record(f);
       promise.then(function (result) {
-        return _this.done(result);
+        return _this2.done(result);
       }).catch(function (reason) {
-        return _this.done(catcher(reason));
+        return _this2.done(catcher(reason));
       });
       return promise;
     });
   };
+
+  var awaitBind = exports.awaitBind = function awaitBind(init, f) {};
 
   var bind = exports.bind = function bind(f) {
     return asyncBind(null, function () {
@@ -562,13 +604,13 @@
   var lagBind = exports.lagBind = function lagBind(lag, init, f) {
     var timeout = null;
     return asyncBind(init, function () {
-      var _this2 = this;
+      var _this3 = this;
 
       if (timeout != null) {
         clearTimeout(timeout);
       }
       return timeout = setTimeout(function () {
-        return _this2.done(_this2.record(f));
+        return _this3.done(_this3.record(f));
       }, lag);
     });
   };
@@ -576,7 +618,7 @@
   var postLagBind = exports.postLagBind = function postLagBind(init, f) {
     var timeout = null;
     return asyncBind(init, function () {
-      var _this3 = this;
+      var _this4 = this;
 
       var _record = this.record(f),
           val = _record.val,
@@ -586,7 +628,7 @@
         clearTimeout(timeout);
       }
       return timeout = setTimeout(function () {
-        return _this3.done(val);
+        return _this4.done(val);
       }, ms);
     });
   };
@@ -620,6 +662,7 @@
       _classCallCheck(this, ObsBase);
 
       this.events = [];
+      this._mkEv();
     }
 
     _createClass(ObsBase, [{
@@ -683,17 +726,17 @@
     function ObsCell(_base) {
       _classCallCheck(this, ObsCell);
 
-      var _this4 = _possibleConstructorReturn(this, (ObsCell.__proto__ || Object.getPrototypeOf(ObsCell)).call(this));
+      var _this5 = _possibleConstructorReturn(this, (ObsCell.__proto__ || Object.getPrototypeOf(ObsCell)).call(this));
 
-      _this4._base = _base != null ? _base : null;
-      _this4.onSet = _this4._mkEv(function () {
-        return [null, _this4._base];
+      _this5._base = _base != null ? _base : null;
+      _this5.onSet = _this5._mkEv(function () {
+        return [null, _this5._base];
       }); // [old, new]
-      _this4._shield = false;
-      autoSub(_this4.onSet, function () {
-        return _this4._refreshAll();
+      _this5._shield = false;
+      autoSub(_this5.onSet, function () {
+        return _this5._refreshAll();
       });
-      return _this4;
+      return _this5;
     }
 
     _createClass(ObsCell, [{
@@ -721,10 +764,10 @@
     }, {
       key: "all",
       value: function all() {
-        var _this5 = this;
+        var _this6 = this;
 
         this.subAll(function () {
-          return !_this5._shield;
+          return !_this6._shield;
         });
         return this._base;
       }
@@ -736,10 +779,10 @@
     }, {
       key: "readonly",
       value: function readonly() {
-        var _this6 = this;
+        var _this7 = this;
 
         return new DepCell(function () {
-          return _this6.all();
+          return _this7.all();
         });
       }
     }, {
@@ -770,10 +813,10 @@
     _createClass(SrcCell, [{
       key: "update",
       value: function update(x) {
-        var _this8 = this;
+        var _this9 = this;
 
         return recorder.mutating(function () {
-          return _this8._update(x);
+          return _this9._update(x);
         });
       }
     }, {
@@ -786,26 +829,41 @@
     return SrcCell;
   }(ObsCell);
 
+  var INIT = exports.INIT = Symbol("init");
+  var REFRESHING = exports.REFRESHING = Symbol("refreshing");
+  var LOADED = exports.LOADED = Symbol("loaded");
+  var DISCONNECTED = exports.DISCONNECTED = Symbol("disconnected");
+  var ERROR = exports.ERROR = Symbol("error");
+
   var DepCell = exports.DepCell = function (_ObsCell2) {
     _inherits(DepCell, _ObsCell2);
 
     function DepCell(body, init) {
       _classCallCheck(this, DepCell);
 
-      var _this9 = _possibleConstructorReturn(this, (DepCell.__proto__ || Object.getPrototypeOf(DepCell)).call(this, init != null ? init : null));
+      var _this10 = _possibleConstructorReturn(this, (DepCell.__proto__ || Object.getPrototypeOf(DepCell)).call(this, init != null ? init : null));
 
-      _this9.body = body != null ? body : null;
-      _this9.refreshing = false;
-      _this9.nestedBinds = [];
-      _this9.cleanups = [];
-      _this9.upstreamEvents = new Set();
-      return _this9;
+      _this10.body = body != null ? body : null;
+      _this10.onStatusChange = _this10._mkEv(function () {
+        return INIT;
+      });
+      _this10.refreshing = false;
+      _this10.nestedBinds = [];
+      _this10.cleanups = [];
+      _this10.upstreamEvents = new Set();
+      _this10._statusCell = null; // cannot immediately initialize because infinite loop
+      return _this10;
     }
 
     _createClass(DepCell, [{
       key: "refresh",
       value: function refresh() {
-        var _this10 = this;
+        return this._refreshArgs();
+      }
+    }, {
+      key: "_refreshArgs",
+      value: function _refreshArgs() {
+        var _this11 = this;
 
         if (!this.refreshing) {
           var old = this._base;
@@ -822,32 +880,41 @@
           // such a lagBind is more desirable (in the face of changing dependencies)
           // and whether on-completion is what's most generalizable.
           var realDone = function realDone(_base) {
-            _this10._base = _base;
-            return _this10.onSet.pub([old, _this10._base]);
+            _this11._base = _base;
+            try {
+              return _this11.onSet.pub([old, _this11._base]);
+            } finally {
+              _this11.onStatusChange.pub(LOADED);
+            }
           };
           var recorded = false;
           var syncResult = null;
           var isSynchronous = false;
+          var _cell = this;
           var env = {
             // next two are for tolerating env.done calls from within env.record
             record: function record(f) {
               // TODO document why @refreshing exists
               // guards against recursively evaluating this recorded
               // function (@body or an async body) when calling `.get()`
-              if (!_this10.refreshing) {
+              if (!_this11.refreshing) {
                 var res = void 0;
-                _this10.disconnect();
+                _this11.disconnect();
                 if (recorded) {
                   throw new Error("this refresh has already recorded its dependencies");
                 }
-                _this10.refreshing = true;
+                _this11.refreshing = true;
+                _this11.disconnect();
+                if (recorded) {
+                  throw new Error("this refresh has already recorded its dependencies");
+                }
                 recorded = true;
                 try {
-                  res = recorder.record(_this10, function () {
-                    return f.call(env);
+                  res = recorder.record(_this11, function () {
+                    return f();
                   });
                 } finally {
-                  _this10.refreshing = false;
+                  _this11.refreshing = false;
                 }
                 if (isSynchronous) {
                   realDone(syncResult);
@@ -857,16 +924,31 @@
             },
             done: function done(x) {
               if (old !== x) {
-                if (_this10.refreshing) {
+                if (_this11.refreshing) {
                   isSynchronous = true;
                   return syncResult = x;
                 } else {
                   return realDone(x);
                 }
               }
-            }
+            },
+            _cell: _cell
           };
-          return this.body.call(env);
+          var r = void 0;
+          try {
+            var _body;
+
+            for (var _len6 = arguments.length, args = Array(_len6), _key6 = 0; _key6 < _len6; _key6++) {
+              args[_key6] = arguments[_key6];
+            }
+
+            r = (_body = this.body).call.apply(_body, [env].concat(args));
+          } catch (e) {
+            this.onStatusChange.pub(ERROR);
+            throw e;
+          }
+          this.onStatusChange.pub(LOADED);
+          return r;
         }
       }
       // unsubscribe from all dependencies and recursively have all nested binds
@@ -875,7 +957,7 @@
     }, {
       key: "disconnect",
       value: function disconnect() {
-        var _this11 = this;
+        var _this12 = this;
 
         // TODO ordering of cleanup vs unsubscribes may require revisiting
         var _iteratorNormalCompletion3 = true;
@@ -931,9 +1013,12 @@
         this.nestedBinds = [];
         this.cleanups = [];
         this.upstreamEvents.forEach(function (ev) {
-          return ev.downstreamCells.delete(_this11);
+          return ev.downstreamCells.delete(_this12);
         });
-        return this.upstreamEvents.clear();
+        this.upstreamEvents.clear();
+        if (!this.refreshing) {
+          this.onStatusChange.pub(DISCONNECTED);
+        }
       }
       // called by recorder
 
@@ -948,6 +1033,14 @@
       key: "addCleanup",
       value: function addCleanup(cleanup) {
         return this.cleanups.push(cleanup);
+      }
+    }, {
+      key: "status",
+      get: function get() {
+        if (!this._statusCell) {
+          this._statusCell = this.onStatusChange.stream(_underscore2.default.identity);
+        }
+        return this._statusCell;
       }
     }]);
 
@@ -967,20 +1060,20 @@
         diff = basicDiff();
       }
 
-      var _this12 = _possibleConstructorReturn(this, (ObsArray.__proto__ || Object.getPrototypeOf(ObsArray)).call(this));
+      var _this13 = _possibleConstructorReturn(this, (ObsArray.__proto__ || Object.getPrototypeOf(ObsArray)).call(this));
 
-      _this12._cells = _cells;
-      _this12.diff = diff;
-      _this12.onChange = _this12._mkEv(function () {
-        return [0, [], _this12._cells.map(function (c) {
+      _this13._cells = _cells;
+      _this13.diff = diff;
+      _this13.onChange = _this13._mkEv(function () {
+        return [0, [], _this13._cells.map(function (c) {
           return c.raw();
         })];
       }); // [index, removed, added]
-      _this12.onChangeCells = _this12._mkEv(function () {
-        return [0, [], _this12._cells];
+      _this13.onChangeCells = _this13._mkEv(function () {
+        return [0, [], _this13._cells];
       }); // [index, removed, added]
-      _this12._indexed = null;
-      return _this12;
+      _this13._indexed = null;
+      return _this13;
     }
 
     _createClass(ObsArray, [{
@@ -1001,10 +1094,10 @@
     }, {
       key: "readonly",
       value: function readonly() {
-        var _this13 = this;
+        var _this14 = this;
 
         return new DepArray(function () {
-          return _this13.all();
+          return _this14.all();
         });
       }
     }, {
@@ -1063,9 +1156,9 @@
 
           try {
             for (var _iterator5 = ys._cells.slice(index, index + removed.length)[Symbol.iterator](), _step5; !(_iteratorNormalCompletion5 = (_step5 = _iterator5.next()).done); _iteratorNormalCompletion5 = true) {
-              var _cell = _step5.value;
+              var _cell2 = _step5.value;
 
-              _cell.disconnect();
+              _cell2.disconnect();
             }
           } catch (err) {
             _didIteratorError5 = true;
@@ -1094,10 +1187,10 @@
     }, {
       key: "transform",
       value: function transform(f, diff) {
-        var _this14 = this;
+        var _this15 = this;
 
         return new DepArray(function () {
-          return f(_this14.all());
+          return f(_this15.all());
         }, diff);
       }
     }, {
@@ -1169,7 +1262,7 @@
     }, {
       key: "indexed",
       value: function indexed() {
-        var _this15 = this;
+        var _this16 = this;
 
         if (this._indexed == null) {
           this._indexed = new IndexedDepArray();
@@ -1179,7 +1272,7 @@
                 removed = _ref11[1],
                 added = _ref11[2];
 
-            return _this15._indexed.realSpliceCells(index, removed.length, added);
+            return _this16._indexed.realSpliceCells(index, removed.length, added);
           });
         }
         return this._indexed;
@@ -1187,8 +1280,8 @@
     }, {
       key: "concat",
       value: function concat() {
-        for (var _len5 = arguments.length, those = Array(_len5), _key5 = 0; _key5 < _len5; _key5++) {
-          those[_key5] = arguments[_key5];
+        for (var _len7 = arguments.length, those = Array(_len7), _key7 = 0; _key7 < _len7; _key7++) {
+          those[_key7] = arguments[_key7];
         }
 
         return _concat.apply(undefined, [this].concat(those));
@@ -1196,7 +1289,7 @@
     }, {
       key: "realSpliceCells",
       value: function realSpliceCells(index, count, additions) {
-        var _this16 = this;
+        var _this17 = this;
 
         var removed = this._cells.splice.apply(this._cells, [index, count].concat(additions));
         var removedElems = snap(function () {
@@ -1210,8 +1303,8 @@
           });
         });
         return transaction(function () {
-          _this16.onChangeCells.pub([index, removed, additions]);
-          return _this16.onChange.pub([index, removedElems, addedElems]);
+          _this17.onChangeCells.pub([index, removed, additions]);
+          return _this17.onChange.pub([index, removedElems, addedElems]);
         });
       }
     }, {
@@ -1222,12 +1315,12 @@
     }, {
       key: "_update",
       value: function _update(val, diff) {
-        var _this17 = this;
+        var _this18 = this;
 
         var left = void 0,
             splices = void 0;
         var old = snap(function () {
-          return _this17._cells.map(function (x) {
+          return _this18._cells.map(function (x) {
             return x.get();
           });
         });
@@ -1241,7 +1334,7 @@
               count = _ref13[1],
               additions = _ref13[2];
 
-          return _this17.realSplice(index, count, additions);
+          return _this18.realSplice(index, count, additions);
         });
       }
     }]);
@@ -1261,17 +1354,17 @@
     _createClass(SrcArray, [{
       key: "spliceArray",
       value: function spliceArray(index, count, additions) {
-        var _this19 = this;
+        var _this20 = this;
 
         return recorder.mutating(function () {
-          return _this19.realSplice(index, count, additions);
+          return _this20.realSplice(index, count, additions);
         });
       }
     }, {
       key: "splice",
       value: function splice(index, count) {
-        for (var _len6 = arguments.length, additions = Array(_len6 > 2 ? _len6 - 2 : 0), _key6 = 2; _key6 < _len6; _key6++) {
-          additions[_key6 - 2] = arguments[_key6];
+        for (var _len8 = arguments.length, additions = Array(_len8 > 2 ? _len8 - 2 : 0), _key8 = 2; _key8 < _len8; _key8++) {
+          additions[_key8 - 2] = arguments[_key8];
         }
 
         return this.spliceArray(index, count, additions);
@@ -1292,16 +1385,16 @@
     }, {
       key: "removeAll",
       value: function removeAll(x) {
-        var _this20 = this;
+        var _this21 = this;
 
         return transaction(function () {
           var i = (0, _underscore2.default)(snap(function () {
-            return _this20.all();
+            return _this21.all();
           })).indexOf(x);
           while (i >= 0) {
-            _this20.removeAt(i);
+            _this21.removeAt(i);
             i = snap(function () {
-              return (0, _underscore2.default)(_this20.all().slice(i));
+              return (0, _underscore2.default)(_this21.all().slice(i));
             }).indexOf(x);
           }
         });
@@ -1309,10 +1402,10 @@
     }, {
       key: "removeAt",
       value: function removeAt(index) {
-        var _this21 = this;
+        var _this22 = this;
 
         var val = snap(function () {
-          return _this21.at(index);
+          return _this22.at(index);
         });
         this.splice(index, 1);
         return val;
@@ -1320,19 +1413,19 @@
     }, {
       key: "push",
       value: function push(x) {
-        var _this22 = this;
+        var _this23 = this;
 
         return this.splice(snap(function () {
-          return _this22.length();
+          return _this23.length();
         }), 0, x);
       }
     }, {
       key: "pop",
       value: function pop() {
-        var _this23 = this;
+        var _this24 = this;
 
         return this.removeAt(snap(function () {
-          return _this23.length() - 1;
+          return _this24.length() - 1;
         }));
       }
     }, {
@@ -1343,10 +1436,10 @@
     }, {
       key: "replace",
       value: function replace(xs) {
-        var _this24 = this;
+        var _this25 = this;
 
         return this.spliceArray(0, snap(function () {
-          return _this24.length();
+          return _this25.length();
         }), xs);
       }
     }, {
@@ -1364,16 +1457,16 @@
     }, {
       key: "update",
       value: function update(xs) {
-        var _this25 = this;
+        var _this26 = this;
 
         return recorder.mutating(function () {
-          return _this25._update(xs);
+          return _this26._update(xs);
         });
       }
     }, {
       key: "move",
       value: function move(src, dest) {
-        var _this26 = this;
+        var _this27 = this;
 
         return transaction(function () {
           // moves element at src to index before dest
@@ -1382,7 +1475,7 @@
           }
 
           var len = snap(function () {
-            return _this26.length();
+            return _this27.length();
           });
 
           if (src < 0 || src > len - 1) {
@@ -1393,15 +1486,15 @@
           }
 
           var val = snap(function () {
-            return _this26.all()[src];
+            return _this27.all()[src];
           });
 
           if (src > dest) {
-            _this26.removeAt(src);
-            _this26.insert(val, dest);
+            _this27.removeAt(src);
+            _this27.insert(val, dest);
           } else {
-            _this26.insert(val, dest);
-            _this26.removeAt(src);
+            _this27.insert(val, dest);
+            _this27.removeAt(src);
           }
         });
       } // removeAt returns, but insert doesn't, so let's avoid inconsistency
@@ -1409,11 +1502,11 @@
     }, {
       key: "swap",
       value: function swap(i1, i2) {
-        var _this27 = this;
+        var _this28 = this;
 
         return transaction(function () {
           var len = snap(function () {
-            return _this27.length();
+            return _this28.length();
           });
           if (i1 < 0 || i1 > len - 1) {
             throw "i1 " + i1 + " is outside of bounds of array of length " + len;
@@ -1425,21 +1518,21 @@
           var first = Math.min(i1, i2);
           var second = Math.max(i1, i2);
 
-          _this27.move(first, second);
-          return _this27.move(second, first);
+          _this28.move(first, second);
+          return _this28.move(second, first);
         });
       }
     }, {
       key: "reverse",
       value: function reverse() {
-        var _this28 = this;
+        var _this29 = this;
 
         // Javascript's Array.reverse both reverses the Array and returns its new value
         this.update(snap(function () {
-          return _this28.all().reverse();
+          return _this29.all().reverse();
         }));
         return snap(function () {
-          return _this28.all();
+          return _this29.all();
         });
       }
     }]);
@@ -1469,20 +1562,20 @@
         xs = [];
       }
 
-      var _this30 = _possibleConstructorReturn(this, (IndexedDepArray.__proto__ || Object.getPrototypeOf(IndexedDepArray)).call(this, xs, diff));
+      var _this31 = _possibleConstructorReturn(this, (IndexedDepArray.__proto__ || Object.getPrototypeOf(IndexedDepArray)).call(this, xs, diff));
 
-      _this30.is = _this30._cells.map(function (x, i) {
+      _this31.is = _this31._cells.map(function (x, i) {
         return cell(i);
       });
-      _this30.onChangeCells = _this30._mkEv(function () {
-        return [0, [], _underscore2.default.zip(_this30._cells, _this30.is)];
+      _this31.onChangeCells = _this31._mkEv(function () {
+        return [0, [], _underscore2.default.zip(_this31._cells, _this31.is)];
       }); // [index, removed, added]
-      _this30.onChange = _this30._mkEv(function () {
-        return [0, [], _underscore2.default.zip(_this30.is, snap(function () {
-          return _this30.all();
+      _this31.onChange = _this31._mkEv(function () {
+        return [0, [], _underscore2.default.zip(_this31.is, snap(function () {
+          return _this31.all();
         }))];
       });
-      return _this30;
+      return _this31;
     }
     // TODO duplicate code with ObsArray
 
@@ -1503,9 +1596,9 @@
 
           try {
             for (var _iterator6 = ys._cells.slice(index, index + removed.length)[Symbol.iterator](), _step6; !(_iteratorNormalCompletion6 = (_step6 = _iterator6.next()).done); _iteratorNormalCompletion6 = true) {
-              var _cell2 = _step6.value;
+              var _cell3 = _step6.value;
 
-              _cell2.disconnect();
+              _cell3.disconnect();
             }
           } catch (err) {
             _didIteratorError6 = true;
@@ -1539,7 +1632,7 @@
       key: "realSpliceCells",
       value: function realSpliceCells(index, count, additions) {
         var _is,
-            _this31 = this;
+            _this32 = this;
 
         var i = void 0;
         var removed = this._cells.splice.apply(this._cells, [index, count].concat(additions));
@@ -1568,8 +1661,8 @@
           });
         });
         return transaction(function () {
-          _this31.onChangeCells.pub([index, removed, _underscore2.default.zip(additions, newIs)]);
-          return _this31.onChange.pub([index, removedElems, _underscore2.default.zip(addedElems, newIs)]);
+          _this32.onChangeCells.pub([index, removed, _underscore2.default.zip(additions, newIs)]);
+          return _this32.onChange.pub([index, removedElems, _underscore2.default.zip(addedElems, newIs)]);
         });
       }
     }]);
@@ -1583,19 +1676,19 @@
     function DepArray(f, diff) {
       _classCallCheck(this, DepArray);
 
-      var _this32 = _possibleConstructorReturn(this, (DepArray.__proto__ || Object.getPrototypeOf(DepArray)).call(this, [], diff));
+      var _this33 = _possibleConstructorReturn(this, (DepArray.__proto__ || Object.getPrototypeOf(DepArray)).call(this, [], diff));
 
-      _this32.f = f;
+      _this33.f = f;
       autoSub(bind(function () {
-        return Array.from(_this32.f());
+        return Array.from(_this33.f());
       }).onSet, function (_ref18) {
         var _ref19 = _slicedToArray(_ref18, 2),
             old = _ref19[0],
             val = _ref19[1];
 
-        return _this32._update(val);
+        return _this33._update(val);
       });
-      return _this32;
+      return _this33;
     }
 
     return DepArray;
@@ -1607,10 +1700,10 @@
     function IndexedArray(_cells) {
       _classCallCheck(this, IndexedArray);
 
-      var _this33 = _possibleConstructorReturn(this, (IndexedArray.__proto__ || Object.getPrototypeOf(IndexedArray)).call(this));
+      var _this34 = _possibleConstructorReturn(this, (IndexedArray.__proto__ || Object.getPrototypeOf(IndexedArray)).call(this));
 
-      _this33._cells = _cells;
-      return _this33;
+      _this34._cells = _cells;
+      return _this34;
     }
 
     _createClass(IndexedArray, [{
@@ -1635,8 +1728,8 @@
   var _concat = function _concat() {
     var ys = new MappedDepArray();
 
-    for (var _len7 = arguments.length, xss = Array(_len7), _key7 = 0; _key7 < _len7; _key7++) {
-      xss[_key7] = arguments[_key7];
+    for (var _len9 = arguments.length, xss = Array(_len9), _key9 = 0; _key9 < _len9; _key9++) {
+      xss[_key9] = arguments[_key9];
     }
 
     var casted = xss.map(function (xs) {
@@ -1681,19 +1774,19 @@
         _base = new Map();
       }
 
-      var _this34 = _possibleConstructorReturn(this, (ObsMap.__proto__ || Object.getPrototypeOf(ObsMap)).call(this));
+      var _this35 = _possibleConstructorReturn(this, (ObsMap.__proto__ || Object.getPrototypeOf(ObsMap)).call(this));
 
-      _this34._base = objToJSMap(_base);
-      _this34.onAdd = _this34._mkEv(function () {
-        return new Map(_this34._base);
+      _this35._base = objToJSMap(_base);
+      _this35.onAdd = _this35._mkEv(function () {
+        return new Map(_this35._base);
       }); // {key: new...}
-      _this34.onRemove = _this34._mkEv(function () {
+      _this35.onRemove = _this35._mkEv(function () {
         return new Map();
       }); // {key: old...}
-      _this34.onChange = _this34._mkEv(function () {
+      _this35.onChange = _this35._mkEv(function () {
         return new Map();
       }); // {key: [old, new]...}
-      return _this34;
+      return _this35;
     }
 
     _createClass(ObsMap, [{
@@ -1724,10 +1817,10 @@
     }, {
       key: "readonly",
       value: function readonly() {
-        var _this35 = this;
+        var _this36 = this;
 
         return new DepMap(function () {
-          return _this35.all();
+          return _this36.all();
         });
       }
     }, {
@@ -1763,18 +1856,18 @@
     }, {
       key: "_update",
       value: function _update(other) {
-        var _this36 = this;
+        var _this37 = this;
 
         var val = void 0;
         var otherMap = objToJSMap(other);
         var ret = new Map(this._base);
         var removals = _underscore2.default.chain(Array.from(this._base.keys())).difference(Array.from(otherMap.keys())).map(function (k) {
-          return [k, mapPop(_this36._base, k)];
+          return [k, mapPop(_this37._base, k)];
         }).value();
 
         var additions = _underscore2.default.chain(Array.from(otherMap.keys())).difference(Array.from(this._base.keys())).map(function (k) {
           val = otherMap.get(k);
-          _this36._base.set(k, val);
+          _this37._base.set(k, val);
           return [k, val];
         }).value();
 
@@ -1783,26 +1876,26 @@
               k = _ref25[0],
               val = _ref25[1];
 
-          return _this36._base.has(k) && _this36._base.get(k) !== val;
+          return _this37._base.has(k) && _this37._base.get(k) !== val;
         }).map(function (_ref26) {
           var _ref27 = _slicedToArray(_ref26, 2),
               k = _ref27[0],
               val = _ref27[1];
 
-          var old = _this36._base.get(k);
-          _this36._base.set(k, val);
+          var old = _this37._base.get(k);
+          _this37._base.set(k, val);
           return [k, [old, val]];
         }).value();
 
         transaction(function () {
           if (removals.length) {
-            _this36.onRemove.pub(new Map(removals));
+            _this37.onRemove.pub(new Map(removals));
           }
           if (additions.length) {
-            _this36.onAdd.pub(new Map(additions));
+            _this37.onAdd.pub(new Map(additions));
           }
           if (changes.length) {
-            return _this36.onChange.pub(new Map(changes));
+            return _this37.onChange.pub(new Map(changes));
           }
         });
 
@@ -1825,10 +1918,10 @@
     _createClass(SrcMap, [{
       key: "put",
       value: function put(key, val) {
-        var _this38 = this;
+        var _this39 = this;
 
         return recorder.mutating(function () {
-          return _this38._realPut(key, val);
+          return _this39._realPut(key, val);
         });
       }
     }, {
@@ -1839,13 +1932,13 @@
     }, {
       key: "delete",
       value: function _delete(key) {
-        var _this39 = this;
+        var _this40 = this;
 
         return recorder.mutating(function () {
           var val = undefined;
-          if (_this39._base.has(key)) {
-            val = _this39._realRemove(key);
-            _this39.onRemove.pub(new Map([[key, val]]));
+          if (_this40._base.has(key)) {
+            val = _this40._realRemove(key);
+            _this40.onRemove.pub(new Map([[key, val]]));
           }
           return val;
         });
@@ -1858,13 +1951,13 @@
     }, {
       key: "clear",
       value: function clear() {
-        var _this40 = this;
+        var _this41 = this;
 
         return recorder.mutating(function () {
-          var removals = new Map(_this40._base);
-          _this40._base.clear();
+          var removals = new Map(_this41._base);
+          _this41._base.clear();
           if (removals.size) {
-            _this40.onRemove.pub(removals);
+            _this41.onRemove.pub(removals);
           }
           return removals;
         });
@@ -1872,10 +1965,10 @@
     }, {
       key: "update",
       value: function update(x) {
-        var _this41 = this;
+        var _this42 = this;
 
         return recorder.mutating(function () {
-          return _this41._update(x);
+          return _this42._update(x);
         });
       }
     }]);
@@ -1889,18 +1982,18 @@
     function DepMap(f) {
       _classCallCheck(this, DepMap);
 
-      var _this42 = _possibleConstructorReturn(this, (DepMap.__proto__ || Object.getPrototypeOf(DepMap)).call(this));
+      var _this43 = _possibleConstructorReturn(this, (DepMap.__proto__ || Object.getPrototypeOf(DepMap)).call(this));
 
-      _this42.f = f;
-      var c = bind(_this42.f);
+      _this43.f = f;
+      var c = bind(_this43.f);
       autoSub(c.onSet, function (_ref28) {
         var _ref29 = _slicedToArray(_ref28, 2),
             old = _ref29[0],
             val = _ref29[1];
 
-        return _this42._update(val);
+        return _this43._update(val);
       });
-      return _this42;
+      return _this43;
     }
 
     return DepMap;
@@ -1934,13 +2027,13 @@
         _base = new Set();
       }
 
-      var _this43 = _possibleConstructorReturn(this, (ObsSet.__proto__ || Object.getPrototypeOf(ObsSet)).call(this));
+      var _this44 = _possibleConstructorReturn(this, (ObsSet.__proto__ || Object.getPrototypeOf(ObsSet)).call(this));
 
-      _this43._base = objToJSSet(_base);
-      _this43.onChange = _this43._mkEv(function () {
-        return [_this43._base, new Set()];
+      _this44._base = objToJSSet(_base);
+      _this44.onChange = _this44._mkEv(function () {
+        return [_this44._base, new Set()];
       }); // additions, removals
-      return _this43;
+      return _this44;
     }
 
     _createClass(ObsSet, [{
@@ -1964,10 +2057,10 @@
     }, {
       key: "readonly",
       value: function readonly() {
-        var _this44 = this;
+        var _this45 = this;
 
         return new DepSet(function () {
-          return _this44.all();
+          return _this45.all();
         });
       }
     }, {
@@ -2000,46 +2093,46 @@
     }, {
       key: "union",
       value: function union(other) {
-        var _this45 = this;
+        var _this46 = this;
 
         return new DepSet(function () {
-          return _union(_this45.all(), _castOther(other));
+          return _union(_this46.all(), _castOther(other));
         });
       }
     }, {
       key: "intersection",
       value: function intersection(other) {
-        var _this46 = this;
+        var _this47 = this;
 
         return new DepSet(function () {
-          return _intersection(_this46.all(), _castOther(other));
+          return _intersection(_this47.all(), _castOther(other));
         });
       }
     }, {
       key: "difference",
       value: function difference(other) {
-        var _this47 = this;
+        var _this48 = this;
 
         return new DepSet(function () {
-          return _difference(_this47.all(), _castOther(other));
+          return _difference(_this48.all(), _castOther(other));
         });
       }
     }, {
       key: "symmetricDifference",
       value: function symmetricDifference(other) {
-        var _this48 = this;
+        var _this49 = this;
 
         return new DepSet(function () {
-          return _difference(_this48.union(other).all(), _this48.intersection(other).all());
+          return _difference(_this49.union(other).all(), _this49.intersection(other).all());
         });
       }
     }, {
       key: "_update",
       value: function _update(y) {
-        var _this49 = this;
+        var _this50 = this;
 
         return transaction(function () {
-          var old_ = new Set(_this49._base);
+          var old_ = new Set(_this50._base);
           var new_ = objToJSSet(y);
 
           var additions = new Set();
@@ -2058,13 +2151,13 @@
           });
 
           old_.forEach(function (item) {
-            return _this49._base.delete(item);
+            return _this50._base.delete(item);
           });
           new_.forEach(function (item) {
-            return _this49._base.add(item);
+            return _this50._base.add(item);
           });
 
-          _this49.onChange.pub([additions, removals]);
+          _this50.onChange.pub([additions, removals]);
           return old_;
         });
       }
@@ -2085,12 +2178,12 @@
     _createClass(SrcSet, [{
       key: "add",
       value: function add(item) {
-        var _this51 = this;
+        var _this52 = this;
 
         return recorder.mutating(function () {
-          if (!_this51._base.has(item)) {
-            _this51._base.add(item);
-            _this51.onChange.pub([new Set([item]), new Set()]);
+          if (!_this52._base.has(item)) {
+            _this52._base.add(item);
+            _this52.onChange.pub([new Set([item]), new Set()]);
           }
           return item;
         });
@@ -2103,12 +2196,12 @@
     }, {
       key: "delete",
       value: function _delete(item) {
-        var _this52 = this;
+        var _this53 = this;
 
         return recorder.mutating(function () {
-          if (_this52._base.has(item)) {
-            _this52._base.delete(item);
-            _this52.onChange.pub([new Set(), new Set([item])]);
+          if (_this53._base.has(item)) {
+            _this53._base.delete(item);
+            _this53.onChange.pub([new Set(), new Set([item])]);
           }
           return item;
         });
@@ -2121,13 +2214,13 @@
     }, {
       key: "clear",
       value: function clear() {
-        var _this53 = this;
+        var _this54 = this;
 
         return recorder.mutating(function () {
-          var removals = new Set(_this53._base);
-          if (_this53._base.size) {
-            _this53._base.clear();
-            _this53.onChange.pub([new Set(), removals]);
+          var removals = new Set(_this54._base);
+          if (_this54._base.size) {
+            _this54._base.clear();
+            _this54.onChange.pub([new Set(), removals]);
           }
           return removals;
         });
@@ -2135,10 +2228,10 @@
     }, {
       key: "update",
       value: function update(y) {
-        var _this54 = this;
+        var _this55 = this;
 
         return recorder.mutating(function () {
-          return _this54._update(y);
+          return _this55._update(y);
         });
       }
     }]);
@@ -2152,18 +2245,18 @@
     function DepSet(f) {
       _classCallCheck(this, DepSet);
 
-      var _this55 = _possibleConstructorReturn(this, (DepSet.__proto__ || Object.getPrototypeOf(DepSet)).call(this));
+      var _this56 = _possibleConstructorReturn(this, (DepSet.__proto__ || Object.getPrototypeOf(DepSet)).call(this));
 
-      _this55.f = f;
-      var c = bind(_this55.f);
+      _this56.f = f;
+      var c = bind(_this56.f);
       autoSub(c.onSet, function (_ref34) {
         var _ref35 = _slicedToArray(_ref34, 2),
             old = _ref35[0],
             val = _ref35[1];
 
-        return _this55._update(val);
+        return _this56._update(val);
       });
-      return _this55;
+      return _this56;
     }
 
     return DepSet;
@@ -2258,8 +2351,8 @@
 
           var res = void 0;
 
-          for (var _len8 = arguments.length, args = Array(_len8), _key8 = 0; _key8 < _len8; _key8++) {
-            args[_key8] = arguments[_key8];
+          for (var _len10 = arguments.length, args = Array(_len10), _key10 = 0; _key10 < _len10; _key10++) {
+            args[_key10] = arguments[_key10];
           }
 
           if (meth != null) {
