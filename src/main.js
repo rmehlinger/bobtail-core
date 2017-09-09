@@ -16,7 +16,12 @@ let popKey = function(x, k) {
   return v;
 };
 
-let mapPop = function(x, k) {
+function mapPop(x) {
+  let k = x.keys().next().value;
+  return [k, mapDel(x, k)];
+}
+
+let mapDel = function(x, k) {
   let v = x.get(k);
   x.delete(k);
   return v;
@@ -40,6 +45,7 @@ let sum = function(xs) {
   return n;
 };
 
+
 //
 // Events and pub-sub dependency management
 //
@@ -50,8 +56,7 @@ let sum = function(xs) {
 export class DepMgr {
   constructor() {
     this.buffering = 0;
-    this.buffer = [];
-    this.events = new Set();
+    this.events = new Map();
   }
   // called by Ev.sub to register a new subscription
   transaction(f) {
@@ -61,23 +66,53 @@ export class DepMgr {
       res = f();
     } finally {
       this.buffering -= 1;
-      if (this.buffering === 0) {
-        let immediateDeps = new Set(_.flatten(Array.from(this.events).map(({downstreamCells}) => Array.from(downstreamCells))));
-        let allDeps = allDownstream(...Array.from(immediateDeps || []));
-        allDeps.forEach(cell => cell._shield = true);
-        try {
-          // we need to clear the buffer now, in case transaction is called as a result of one
-          // the events that we're publishing, since that would cause transaction to execute again with
-          // the full buffer, causing an infinite loop.
-          let bufferedPubs = this.buffer;
-          this.buffer = [];
-          this.events.clear();
+      if (this.buffering === 0 && this.events.size) {
+        let oldDeps = new Set();
+        let immediateDeps = new Set();
+        let internalDeps = new Set();
+        let refreshed = new Set();
+        let allDeps;
+        this.buffering++;
+        while(this.events.size) {
+          while(this.events.size) {
+            let [ev, pubs] = mapPop(this.events);
+            ev.downstreamCells.forEach(c => {
+              if(oldDeps.has(c)) {
+                return;
+              }
+              c._shield = true;
+              /*
+              internal cells--those used by DepArrays/Sets/Maps--propagate changes to their containing
+              object imperatively, by calling an update method. That means there is no direct connection
+              in the DAG to their dependent objects; indeed there cannot be, as the point of these types
+              is that not all of their dependent objects will need to refresh for every change. As such,
+              to establish the dependencies that *do* need to be refreshed, we refresh the internal cell,
+              which will cause downstream cells to be added to the refresh list.
+              */
 
-          bufferedPubs.map(([ev, data]) => ev.pub(data));
-          allDeps.forEach(c => c.refresh());
-        } finally {
-          allDeps.forEach(cell => cell._shield = false);
+              if(c.internal && !internalDeps.has(c)) {
+                internalDeps.add(c);
+                c.refresh();
+              }
+              else {
+                immediateDeps.add(c);
+              }
+            });
+            if(ev.digest) {
+              ev._realPub(...ev.digest(pubs));
+            }
+            else {
+              pubs.forEach(data => ev._realPub(data));
+            }
+          }
+          allDeps = allDownstream(...Array.from(immediateDeps));
+          allDeps.forEach(c => {c._shield = true;});
+          allDeps.forEach(c => {c.refresh(); refreshed.add(c);});
+          oldDeps = immediateDeps;
+          immediateDeps = new Set();
         }
+        refreshed.forEach(c => {c._shield = false;});
+        this.buffering--;
       }
     }
     return res;
@@ -88,11 +123,21 @@ export let _depMgr = new DepMgr();
 let depMgr = _depMgr;
 
 export class Ev {
-  constructor(init, observable) {
+  constructor(init, observable, digest) {
     this.observable = observable;
     this.init = init;
     this.subs = mkMap();
-    this.downstreamCells = new Set();
+    this.downstreamEvents = new Set();
+    this.digest = digest;
+  }
+  get downstreamCells () {
+    let cells = new Set();
+    this.downstreamEvents.forEach(ev => {
+      if(ev.observable instanceof ObsCell) {
+        cells.add(ev.observable);
+      }
+    });
+    return cells;
   }
   sub(listener) {
     let uid = mkuid();
@@ -103,13 +148,18 @@ export class Ev {
   // callable only by the src
   pub(data) {
     if (depMgr.buffering) {
-      depMgr.buffer.push([this, data]);
-      depMgr.events.add(this);
-    } else {
-      for (let uid in this.subs) {
-        let listener = this.subs[uid];
-        listener(data);
+      if(!depMgr.events.get(this)) {
+        depMgr.events.set(this, []);
       }
+      depMgr.events.get(this).push(data);
+    } else {
+      this._realPub(data);
+    }
+  }
+  _realPub(data) {
+    for (let uid in this.subs) {
+      let listener = this.subs[uid];
+      listener(data);
     }
   }
   unsub(uid) {
@@ -143,21 +193,27 @@ export let upstream = function(cell) {
   return Array.from(new Set(depCells));
 };
 
-var allDownstreamHelper = function(...cells) {
+function allDownstreamHelper(...cells) {
   if (cells.length) {
-    let downstream = Array.from(new Set(_.flatten(cells.map(cell => Array.from(cell.onSet.downstreamCells)))));
-    return _.flatten([downstream, allDownstreamHelper(...Array.from(downstream || []))]);
+    let downstream = _.chain(cells).map(cell => Array.from(cell.onSet.downstreamCells)).flatten().uniq().sortBy(c => !c.internal).value();
+    return _.flatten([downstream, allDownstreamHelper(...downstream)]);
   }
   return [];
-};
+}
 
-export let allDownstream = (...cells) => Array.from(
-  new Set([
-    ...cells,
-    ...allDownstreamHelper(...(cells || []))
-  ].reverse())
-).reverse();
-
+export function allDownstream(...cells) {
+  let seen = new Set();
+  let ret = [];
+  let downstreams;
+  for(let cell of cells) {
+    if(!seen.has(cell)) {
+      downstreams = allDownstreamHelper(cell);
+      downstreams.forEach(d => seen.add(d));
+      ret = ret.concat([cell, ...downstreams]);
+    }
+  }
+  return Array.from(new Set(ret.reverse())).reverse();
+}
 
 class Recorder {
   constructor() {
@@ -196,9 +252,9 @@ class Recorder {
     if ((this.stack.length > 0) && !this.isIgnoring) {
       let topCell = _(this.stack).last();
       topCell.upstreamEvents.add(event);
-      event.downstreamCells.add(topCell);
+      event.downstreamEvents.add(topCell.onSet);
       return autoSub(event, function(...evData) {
-        if (condFn(...Array.from(evData || []))) { return topCell.refresh(); }
+        if (condFn(...(evData || [])) && !topCell._shield) { return topCell.refresh(); }
       });
     }
   }
@@ -308,12 +364,13 @@ export let subOnce = function(event, listener) {
 class ObsBase {
   constructor() {
     this.events = [];
+    this._uid = mkuid();
   }
   flatten() { return flatten(this); }
   subAll(condFn) { if (condFn == null) { condFn = () => true; } return this.events.forEach(ev => recorder.sub(ev, condFn)); }
   raw() { return this._base; }
-  _mkEv(f) {
-    let ev = new Ev(f, this);
+  _mkEv(f, digest) {
+    let ev = new Ev(f, this, digest);
     this.events.push(ev);
     return ev;
   }
@@ -332,11 +389,14 @@ export class ObsCell extends ObsBase {
   constructor(_base) {
     super();
     this._base = _base != null ? _base : null;
-    this.onSet = this._mkEv(() => [null, this._base]); // [old, new]
+    this.onSet = this._mkEv(
+      () => [null, this._base],
+      (data) => [[_.first(data)[0], _.last(data)[1]]]
+    ); // [old, new]
     this._shield = false;
     let downstreamCells = () => this.onSet.downstreamCells;
     this.refreshAll = () => {
-      if (this.onSet.downstreamCells.size && !this._shield) {
+      if (this.onSet.downstreamEvents.size && !this._shield) {
         this._shield = true;
         let cells = allDownstream(...Array.from(downstreamCells()) || []);
         cells.forEach(c => c._shield = true);
@@ -351,7 +411,7 @@ export class ObsCell extends ObsBase {
   }
 
   all() {
-    this.subAll(() => !this._shield);
+    this.subAll();
     return this._base;
   }
   get() { return this.all(); }
@@ -380,7 +440,7 @@ export class DepCell extends ObsCell {
     this.cleanups = [];
     this.upstreamEvents = new Set();
   }
-  refresh() {
+  refresh(publish=true) {
     if (!this.refreshing) {
       let old = this._base;
       // TODO we are immediately disconnecting; something that disconnects upon
@@ -397,7 +457,7 @@ export class DepCell extends ObsCell {
       // and whether on-completion is what's most generalizable.
       let realDone = _base => {
         this._base = _base;
-        return this.onSet.pub([old, this._base]);
+        this.onSet.pub([old, this._base]);
       };
       let recorded = false;
       let syncResult = null;
@@ -426,7 +486,7 @@ export class DepCell extends ObsCell {
               isSynchronous = true;
               return syncResult = x;
             } else {
-              return realDone(x);
+              realDone(x);
             }
           }
         }
@@ -446,7 +506,7 @@ export class DepCell extends ObsCell {
     }
     this.nestedBinds = [];
     this.cleanups = [];
-    this.upstreamEvents.forEach(ev => ev.downstreamCells.delete(this));
+    this.upstreamEvents.forEach(ev => ev.downstreamEvents.delete(this.onSet));
     return this.upstreamEvents.clear();
   }
   // called by recorder
@@ -466,8 +526,15 @@ export class ObsArray extends ObsBase {
     super();
     this._cells = _cells;
     this.diff = diff;
-    this.onChange = this._mkEv(() => [0, [], this._cells.map(c => c.raw())]); // [index, removed, added]
-    this.onChangeCells = this._mkEv(() => [0, [], this._cells]); // [index, removed, added]
+
+    this.onChange = this._mkEv(
+      () => [0, [], this._cells.map(c => c.raw())],  // ...[index, removed, added] (supports batching)
+      _.identity
+    );
+    this.onChangeCells = this._mkEv(
+      () => [0, [], this._cells], // ...[index, removed, added] (supports batching)
+      _.identity
+    );
     this._indexed = null;
   }
   all() {
@@ -478,30 +545,42 @@ export class ObsArray extends ObsBase {
   readonly() { return new DepArray(() => this.all()); }
   rawCells() { return this._cells; }
   at(i) {
-    recorder.sub(this.onChange, function([index, removed, added]) {
-      // if elements were inserted or removed prior to this element
-      if ((index <= i) && (removed.length !== added.length))
-        return true;
-      // if this element is one of the elements changed
-      if ((removed.length === added.length) && (i <= (index + removed.length)))
-        return true;
+    recorder.sub(this.onChange, function(...splices) {
+      for(let [index, removed, added] of splices){
+        // if elements were inserted or removed prior to this element
+        if ((index <= i) && (removed.length !== added.length))
+          return true;
+        // if this element is one of the elements changed
+        if ((removed.length === added.length) && (i <= (index + removed.length)))
+          return true;
+      }
       return false;
     });
     return (this._cells[i] != null ? this._cells[i].get() : undefined);
   }
   length() {
-    recorder.sub(this.onChangeCells, ([index, removed, added]) => removed.length !== added.length);
+    recorder.sub(this.onChangeCells, (...splices) => {
+      let diff = 0;
+      /*eslint-disable*/
+      for(let [index, removed, added] of splices) {
+      /*eslint-enable*/
+        diff += added - removed;
+      }
+      return !diff;
+    });
     return this._cells.length;
   }
   size() { return this.length(); }
   map(f) {
     let ys = new MappedDepArray();
-    autoSub(this.onChangeCells, ([index, removed, added]) => {
-      for (let cell of ys._cells.slice(index, index + removed.length)) {
-        cell.disconnect();
+    autoSub(this.onChangeCells, (...splices) => {
+      for (let [index, removed, added] of splices) {
+        for (let cell of ys._cells.slice(index, index + removed.length)) {
+          cell.disconnect();
+        }
+        let newCells = added.map(item => bind(() => f(item.get())));
+        ys.realSpliceCells(index, removed.length, newCells);
       }
-      let newCells = added.map(item => bind(() => f(item.get())));
-      return ys.realSpliceCells(index, removed.length, newCells);
     });
     return ys;
   }
@@ -523,8 +602,11 @@ export class ObsArray extends ObsBase {
   indexed() {
     if ((this._indexed == null)) {
       this._indexed = new IndexedDepArray();
-      autoSub(this.onChangeCells, ([index, removed, added]) =>
-        this._indexed.realSpliceCells(index, removed.length, added));
+      autoSub(this.onChangeCells, (...splices) => {
+        for(let [index, removed, added] of splices) {
+          this._indexed.realSpliceCells(index, removed.length, added);
+        }
+      });
     }
     return this._indexed;
   }
@@ -533,7 +615,7 @@ export class ObsArray extends ObsBase {
     let removed = this._cells.splice.apply(this._cells, [index, count].concat(additions));
     let removedElems = snap(() => removed.map((x2) => x2.get()));
     let addedElems = snap(() => additions.map((x3) => x3.get()));
-    return transaction(() => {
+    return optTransact(() => {
       this.onChangeCells.pub([index, removed, additions]);
       return this.onChange.pub([index, removedElems, addedElems]);
     });
@@ -565,7 +647,7 @@ export class SrcArray extends ObsArray {
     if (i >= 0) { return this.removeAt(i); }
   }
   removeAll(x) {
-    return transaction(() => {
+    return optTransact(() => {
       let i = _(snap(() => this.all())).indexOf(x);
       while (i >= 0) {
         this.removeAt(i);
@@ -586,7 +668,7 @@ export class SrcArray extends ObsArray {
   shift() { return this.removeAt(0); }
   // TODO: How is this different from replace? we should use one or the other.
   update(xs) { return recorder.mutating(() => this._update(xs)); }
-  move(src, dest) { return transaction(() => {
+  move(src, dest) { return optTransact(() => {
     // moves element at src to index before dest
     if (src === dest) { return; }
 
@@ -610,7 +692,7 @@ export class SrcArray extends ObsArray {
     }
 
   }); }  // removeAt returns, but insert doesn't, so let's avoid inconsistency
-  swap(i1, i2) { return transaction(() => {
+  swap(i1, i2) { return optTransact(() => {
     let len = snap(() => this.length());
     if ((i1 < 0) || (i1 > (len - 1))) {
       throw `i1 ${i1} is outside of bounds of array of length ${len}`;
@@ -642,18 +724,20 @@ export class IndexedDepArray extends ObsArray {
     if (xs == null) { xs = []; }
     super(xs, diff);
     this.is = (this._cells.map((x, i) => cell(i)));
-    this.onChangeCells = this._mkEv(() => [0, [], _.zip(this._cells, this.is)]); // [index, removed, added]
-    this.onChange = this._mkEv(() => [0, [], _.zip(this.is, snap(() => this.all()))]);
+    this.onChangeCells = this._mkEv(() => [0, [], _.zip(this._cells, this.is)], _.identity); // [index, removed, added]
+    this.onChange = this._mkEv(() => [0, [], _.zip(this.is, snap(() => this.all()))], _.identity);
   }
   // TODO duplicate code with ObsArray
   map(f) {
     let ys = new MappedDepArray();
-    autoSub(this.onChangeCells, ([index, removed, added]) => {
-      for (let cell of ys._cells.slice(index, index + removed.length)) {
-        cell.disconnect();
+    autoSub(this.onChangeCells, (...splices) => {
+      for(let [index, removed, added] of splices) {
+        for (let _cell of ys._cells.slice(index, index + removed.length)) {
+          _cell.disconnect();
+        }
+        let newCells = added.map(([item, icell]) => bind(() => f(item.get(), icell)));
+        ys.realSpliceCells(index, removed.length, newCells);
       }
-      let newCells = added.map(([item, icell]) => bind(() => f(item.get(), icell)));
-      return ys.realSpliceCells(index, removed.length, newCells);
     });
     return ys;
   }
@@ -676,7 +760,7 @@ export class IndexedDepArray extends ObsArray {
     this.is.splice(index, count, ...newIs);
 
     let addedElems = snap(() => additions.map((x3) => x3.get()));
-    return transaction(() => {
+    return optTransact(() => {
       this.onChangeCells.pub([index, removed, _.zip(additions, newIs)]);
       return this.onChange.pub([index, removedElems, _.zip(addedElems, newIs)]);
     });
@@ -687,7 +771,11 @@ export class DepArray extends ObsArray {
   constructor(f, diff) {
     super([], diff);
     this.f = f;
-    autoSub((bind(() => Array.from(this.f()))).onSet, ([old, val]) => this._update(val));
+    this.c = bind(this.f);
+    this.c.internal = true;
+    this.c.onSet.downstreamEvents.add(this.onChangeCells);
+    this.c.onSet.downstreamEvents.add(this.onChange);
+    autoSub(this.c.onSet, ([old, val]) => this._update(val));
   }
 }
 
@@ -698,9 +786,11 @@ export class IndexedArray extends DepArray {
   }
   map(f) {
     let ys = new MappedDepArray();
-    autoSub(this._cells.onChange, ([index, removed, added]) =>
-      ys.realSplice(index, removed.length, added.map(f))
-    );
+    autoSub(this._cells.onChange, function(...splices) {
+      for(let [index, removed, added] of splices) {
+        ys.realSplice(index, removed.length, added.map(f));
+      }
+    });
     return ys;
   }
 }
@@ -708,12 +798,15 @@ export class IndexedArray extends DepArray {
 export let concat = function(...xss) {
   let ys = new MappedDepArray();
   let casted = xss.map(xs => cast(xs, "array"));
-  let repLens = xss.map(() => 0);
+  let repLens = xss.map(() =>0);
+
   casted.forEach((xs, i) =>
-    autoSub(xs.onChange, function([index, removed, added]) {
-      let xsOffset = sum(repLens.slice(0, i));
-      repLens[i] += added.length - removed.length;
-      return ys.realSplice(xsOffset + index, removed.length, added);
+    autoSub(xs.onChange, function(...splices) {
+      for(let [index, removed, added] of splices) {
+        let xsOffset = sum(repLens.slice(0, i));
+        repLens[i] += added.length - removed.length;
+        ys.realSplice(xsOffset + index, removed.length, added);
+      }
     })
   );
   return ys;
@@ -768,7 +861,7 @@ export class ObsMap extends ObsBase {
     }
   }
   realRemove(key) {
-    let val = mapPop(this._base, key);
+    let val = mapDel(this._base, key);
     this.onRemove.pub(new Map([[key, val]]));
     return val;
   }
@@ -779,7 +872,7 @@ export class ObsMap extends ObsBase {
     let removals = _
       .chain(Array.from(this._base.keys()))
       .difference(Array.from(otherMap.keys()))
-      .map(k => [k, mapPop(this._base, k)])
+      .map(k => [k, mapDel(this._base, k)])
       .value();
 
     let additions = _
@@ -802,7 +895,7 @@ export class ObsMap extends ObsBase {
       })
       .value();
 
-    transaction(() => {
+    optTransact(() => {
       if (removals.length) { this.onRemove.pub(new Map(removals)); }
       if (additions.length) { this.onAdd.pub(new Map(additions)); }
       if (changes.length) { return this.onChange.pub(new Map(changes)); }
@@ -837,8 +930,12 @@ export class DepMap extends ObsMap {
   constructor(f) {
     super();
     this.f = f;
-    let c = bind(this.f);
-    autoSub(c.onSet, ([old, val]) => this._update(val));
+    this.c = bind(this.f);
+    this.c.internal = true;
+    this.c.onSet.downstreamEvents.add(this.onAdd);
+    this.c.onSet.downstreamEvents.add(this.onChange);
+    this.c.onSet.downstreamEvents.add(this.onRemove);
+    autoSub(this.c.onSet, ([old, val]) => this._update(val));
   }
 }
 
@@ -861,7 +958,28 @@ export class ObsSet extends ObsBase {
     if (_base == null) { _base = new Set(); }
     super();
     this._base = objToJSSet(_base);
-    this.onChange = this._mkEv(() => [this._base, new Set()]);  // additions, removals
+    this.onChange = this._mkEv(
+      () => [this._base, new Set()],  // additions, removals
+      (changeSets) => {
+        let additions = new Set();
+        let removals = new Set();
+        for(let [curAdds, curRems] of changeSets) {
+          for(let cur of curAdds){
+            if(removals.has(cur)) {
+              removals.delete(cur);
+            }
+            additions.add(cur);
+          }
+          for(let cur of curRems){
+            if(additions.has(cur)) {
+              additions.delete(cur);
+            }
+            removals.add(cur);
+          }
+        }
+        return [[additions, removals]];
+      }
+    );
   }
   has(key) {
     this.subAll(([additions, removals]) => additions.has(key) || removals.has(key));
@@ -886,7 +1004,7 @@ export class ObsSet extends ObsBase {
       return difference(this.union(other).all(), this.intersection(other).all());
     });
   }
-  _update(y) { return transaction(() => {
+  _update(y) { return optTransact(() => {
     let old_ = new Set(this._base);
     let new_ = objToJSSet(y);
 
@@ -949,8 +1067,10 @@ export class DepSet extends ObsSet {
   constructor(f) {
     super();
     this.f = f;
-    let c = bind(this.f);
-    autoSub(c.onSet, ([old, val]) => this._update(val));
+    this.c = bind(this.f);
+    this.c.internal = true;
+    this.c.onSet.downstreamEvents.add(this.onChange);
+    autoSub(this.c.onSet, ([old, val]) => this._update(val));
   }
 }
 
@@ -1105,7 +1225,7 @@ array.from = function(value, diff) {
 export let map = value => new SrcMap(value);
 map.from = function(value) {
   if (value instanceof ObsMap) { return value;
-  } else if (value instanceof ObsBase) { return new DepMap(function() { return value.get(); });
+  } else if (value instanceof ObsBase) { return new DepMap(function() { return value.all(); });
   } else { return new DepMap(function() { return value; }); }
 };
 
@@ -1248,3 +1368,10 @@ let permToSplices = function(oldLength, newXs, perm) {
 };
 
 export let transaction = f => depMgr.transaction(f);
+let optTransact = (f) => {
+  if(depMgr.buffering) {
+    return f();
+  } else {
+    return transaction(f);
+  }
+};

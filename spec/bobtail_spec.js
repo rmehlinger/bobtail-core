@@ -2,6 +2,7 @@ import _ from 'underscore';
 import * as rx from '../src/main.js';
 let {snap, bind, Ev} = rx;
 jasmine.CATCH_EXCEPTIONS = false;;
+Error.stackTraceLimit = 20;
 
 describe('ObsBase', () => it('should start', function() {}));
 
@@ -804,7 +805,7 @@ describe('Recorder.depsEvsMap', function() {
     //   |/
     //   C
     // These are relatively difficult to construct due to the need to instantiate B before C.
-    let reverseBinds = c => c.onSet.downstreamCells = new Set(Array.from(c.onSet.downstreamCells).reverse());
+    let reverseBinds = c => c.onSet.downstreamEvents = new Set(Array.from(c.onSet.downstreamEvents).reverse());
     it('should work with left triangle', function() {
       let a = rx.cell(0);
       let b = bind(() => a.get() * 2);
@@ -2071,6 +2072,86 @@ describe('transaction', function() {
         return rx.transaction(() => x.set(5));
       });
     });
-    expect(changes.raw()).toBe(6);
+    expect(changes.raw()).toBe(3);
+  });
+  describe('should only fire each event once', () => {
+    xit("should work in a simple case", () => {
+      let a = rx.cell(0);
+      let b = rx.cell(1);
+      let c = bind(() => a.get() + b.get());
+      let d = bind(() => c.get() * a.get());
+      let e = bind(() => b.get() * 2);
+      let arr = rx.array.from(bind(() => [5, a.get(), b.get(), c.get()]));
+      let f = bind(() => arr.all());
+      let counts = new Map([a,b,c,d,e,arr, f].map(cell => [cell, []]));
+      [a,b,c,d,e,f].forEach(cell => rx.autoSub(cell.onSet, rx.skipFirst(arg => counts.get(cell).push(arg))));
+      rx.autoSub(arr.onChange, rx.skipFirst(arg => {counts.get(arr).push(arg)}));
+      rx.transaction(() => {
+        a.set(1);
+        b.set(2);
+        a.set(3);
+        b.set(4);
+        a.set(5);
+      });
+      counts.forEach(v => expect(v.length).toBe(1));
+      expect(a.raw()).toBe(5);
+      expect(b.raw()).toBe(4);
+      expect(c.raw()).toBe(9);
+      expect(d.raw()).toBe(45);
+      expect(e.raw()).toBe(8);
+      expect(arr.raw()).toEqual([5, 5, 4, 9]);
+      expect(f.raw()).toEqual([5, 5, 4, 9]);
+      expect(counts.get(a)[0]).toEqual([0, 5]);
+      expect(counts.get(b)[0]).toEqual([1, 4]);
+      expect(counts.get(c)[0]).toEqual([1, 9]);
+      expect(counts.get(d)[0]).toEqual([0, 45]);
+      expect(counts.get(e)[0]).toEqual([2, 8]);
+      expect(counts.get(f)[0]).toEqual([[5, 0, 1, 1], [5, 5, 4, 9]]);
+    });
+    xit("should work in a complex case", () => {
+      let arr = rx.array([['a', 1], ['b', 2]]);
+      arr.name = 'arr';
+      let map = rx.map.from(arr);
+      map.c.name = 'map';
+      let cell = rx.cell.from(arr);
+      cell.name = 'cell';
+      let exploded = bind(() => Array.from(map.all().keys()).concat(Array.from(map.all().values())));
+      exploded.name = 'exploded';
+      let set = rx.set.from(bind(() => Array.from(map.all().keys())));
+      set.c.name = 'set';
+      let size = bind(() => set.size());
+      size.name = 'size';
+      let len = bind(() => arr.length());
+      len.name = 'len';
+      let cell3 = bind(() => rx.flatten([exploded.get(), [len.get()], size.get()]).all());
+      cell3.name = 'cell3';
+      let evMap = new Map();
+      for(let obj of [arr, map, cell, set, exploded, cell3]) {
+        for(let ev of obj.events) {
+          evMap.set(ev, []);
+          rx.autoSub(ev, rx.skipFirst((arg) => {
+            // console.info("event for", ev.observable.name);
+            evMap.get(ev).push(arg);
+          }));
+        }
+      }
+      // rx.autoSub(arr.onChange, rx.skipFirst(arg => console.info(arg)));
+      rx.transaction(() => {
+        arr.put(1, ['b', 42]);
+        arr.push(['c', 3]);
+        arr.removeAt(0);
+        arr.push(['z', 26]);
+        arr.push(['y', 25]);
+      });
+      evMap.forEach((v, ev) => {
+        expect(v.length).toBe(1);
+      });
+      expect(arr.raw()).toEqual([['b', 42], ['c', 3], ['z', 26], ['y', 25]]);
+      expect(cell.raw()).toEqual([['b', 42], ['c', 3], ['z', 26], ['y', 25]]);
+      expect(Array.from(map.raw())).toEqual([['b', 42], ['c', 3], ['z', 26], ['y', 25]]);
+      expect(set.raw()).toEqual(new Set(['b', 'c', 'z', 'y']));
+      expect(exploded.raw()).toEqual(['b', 'c', 'z', 'y', 42, 3, 26, 25]);
+      expect(cell3.raw()).toEqual(['b', 'c', 'z', 'y', 42, 3, 26, 25, 4, 4])
+    });
   });
 });
