@@ -2,6 +2,7 @@ import _ from 'underscore';
 import * as rx from '../src/main.js';
 let {snap, bind, Ev} = rx;
 jasmine.CATCH_EXCEPTIONS = false;;
+Error.stackTraceLimit = 20;
 
 describe('ObsBase', () => it('should start', function() {}));
 
@@ -2167,27 +2168,120 @@ describe('event streams', () => {
   });
   it('should be accumulate changes', () => {
     let src = rx.cell("");
-    let count = src.onSet.stream(rx.skipFirst(function([o, n]) {
+    let accum = src.onSet.stream(rx.skipFirst(function([o, n]) {
       return this.raw() + n;
     }), "");
-    expect(count.raw()).toBe("");
+    expect(accum.raw()).toBe("");
     src.set("A");
-    expect(count.raw()).toBe("A");
+    expect(accum.raw()).toBe("A");
     src.set("B");
-    expect(count.raw()).toBe("AB");
+    expect(accum.raw()).toBe("AB");
     src.set("C");
-    expect(count.raw()).toBe("ABC");
+    expect(accum.raw()).toBe("ABC");
+  });
+  it('should not trigger changes if transform returns undefined', () => {
+    let src = rx.cell("");
+    let vowelSet = new Set(['a', 'e', 'i', 'o', 'u']);
+    let vowels = src.onSet.stream(rx.skipFirst(function([o, n]) {
+      if(vowelSet.has(n)) {
+        return this.raw() + n;
+      }
+      return undefined;
+    }), '');
+    let alphabet = 'abcdefghijklmnopqrstuvwxyz'.split('');
+    for(let c of alphabet) {
+      src.set(c);
+    }
+    expect(vowels.raw()).toBe('aeiou');
+  });
+  it('internal binds should be disposed of on event publication', () => {
+    let src = rx.cell("");
+    let num = rx.cell("0");
+    let accum = src.onSet.stream((function([o, n]) {
+      let x = bind(() => num.get() + "" + n);
+      x.name = 'inner';
+      return x
+    }), "");
+    let cleanupSpy = jasmine.createSpy('cb');
+    let inner = accum.raw();
+    inner.addCleanup(cleanupSpy);
+    expect(cleanupSpy).not.toHaveBeenCalled();
+    expect(inner.raw()).toBe("0");
+    num.set("1");
+    expect(inner.raw()).toBe("1");
+    expect(cleanupSpy).toHaveBeenCalled();
+    cleanupSpy.calls.reset();
+    inner.addCleanup(cleanupSpy);
+    src.set('a');expect(cleanupSpy).toHaveBeenCalled();
+    expect(accum.raw().raw()).toBe("1a");
+    num.set('2');
+    expect(inner.raw()).toBe('1');
+    expect(accum.raw().raw()).toBe("2a");
+  });
+  it('referencing external cells should cause recalculation on change', () => {
+    let src = rx.cell("");
+    let num = rx.cell("0");
+    let accum = src.onSet.stream((function(arg) {
+      let [o, n] = arg || [];
+      return this.raw() + num.get() + "" + (n == undefined ? '': n);
+    }), "");
+    expect(accum.raw()).toBe('0');
+    num.set(1);
+    expect(accum.raw()).toBe('01');
+    src.set('a');
+    expect(accum.raw()).toBe('011a');
+  });
+  it('should be composable', () => {
+    let x = rx.cell(1);
+    let y = rx.cell(2);
+    function counter() {return rx.skipFirst(function() {return this.raw() + 1;})}
+    let xStream = x.onSet.stream(counter(), 0);
+    let yStream = y.onSet.stream(counter(), 0);
+    let z = bind(() => xStream.get() + yStream.get());
+    expect(z.raw()).toBe(0);
+    x.set(3);
+    expect(z.raw()).toBe(1);
+    y.set(4);
+    expect(z.raw()).toBe(2);
+    rx.transaction(() => {
+      x.set(0);
+      y.set(0);
+      x.set(1);
+      y.set(2);
+    });
+    expect(z.raw()).toBe(6);  // 4 when we turn on event digesting
   });
 });
 
 
 describe('cell status', () => {
   it('should work', () => {
-    let x = rx.cell(0);
-    let y = new rx.DepCell(function() {this.done(this.record(() => x.get()))});
-    expect(y.status.raw()).toBe(rx.INIT);
-    y.refresh();
-    expect(y.status.raw()).toBe(rx.LOADED);
-    y.disconnect();
+    let xx = rx.cell(0);
+    let yy = new rx.DepCell(function () {
+      this.done(this.record(() => xx.get()))
+    });
+    let loadingSpy = jasmine.createSpy('cb');
+    rx.autoSub(yy.onStatusChange, loadingSpy);
+    expect(yy.status.raw()).toBe(rx.INIT);
+    yy.refresh();
+    expect(loadingSpy).toHaveBeenCalledWith(rx.REFRESHING);
+    expect(yy.status.raw()).toBe(rx.LOADED);
+    yy.disconnect();
   });
+  it('should set error state correctly', () => {
+    let x = new rx.DepCell(() => {
+      throw Error("whoops");
+    });
+    try {
+      x.refresh();
+    } catch(e) {
+
+    } finally {
+      expect(x.status.raw()).toBe(rx.ERROR);
+    }
+  });
+  it('late calls to .status should still work', () => {
+    let x = bind(() => 42);
+    expect(x.status.raw()).toBe(rx.LOADED);
+  })
 });

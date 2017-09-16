@@ -16,7 +16,7 @@
   Object.defineProperty(exports, "__esModule", {
     value: true
   });
-  exports.transaction = exports.smartUidify = exports.uidify = exports._rxUid = exports.basicDiff = exports.cellToSet = exports.cellToMap = exports.cellToArray = exports.flatten = exports.cast = exports.set = exports.map = exports.array = exports.cell = exports.autoReactify = exports.reactify = exports.unlift = exports.lift = exports.liftSpec = exports.DepSet = exports.SrcSet = exports.ObsSet = exports.DepMap = exports.SrcMap = exports.ObsMap = exports.concat = exports.IndexedArray = exports.DepArray = exports.IndexedDepArray = exports.MappedDepArray = exports.SrcArray = exports.ObsArray = exports.DepCell = exports.ERROR = exports.DISCONNECTED = exports.LOADED = exports.REFRESHING = exports.INIT = exports.SrcCell = exports.ObsCell = exports.ObsBase = exports.subOnce = exports.autoSub = exports.onDispose = exports.snap = exports.postLagBind = exports.lagBind = exports.bind = exports.awaitBind = exports.promiseBind = exports.asyncBind = exports.hideMutationWarnings = exports._recorder = exports.types = exports.allDownstream = exports.upstream = exports.skipFirst = exports.Ev = exports._depMgr = exports.DepMgr = undefined;
+  exports.transaction = exports.smartUidify = exports.uidify = exports._rxUid = exports.basicDiff = exports.cellToSet = exports.cellToMap = exports.cellToArray = exports.flatten = exports.cast = exports.set = exports.map = exports.array = exports.cell = exports.autoReactify = exports.reactify = exports.unlift = exports.lift = exports.liftSpec = exports.DepSet = exports.SrcSet = exports.ObsSet = exports.DepMap = exports.SrcMap = exports.ObsMap = exports.concat = exports.IndexedArray = exports.DepArray = exports.IndexedDepArray = exports.MappedDepArray = exports.SrcArray = exports.ObsArray = exports.DepCell = exports.ERROR = exports.DISCONNECTED = exports.LOADED = exports.REFRESHING = exports.INIT = exports.SrcCell = exports.ObsCell = exports.ObsBase = exports.subOnce = exports.autoSub = exports.onDispose = exports.snap = exports.postLagBind = exports.lagBind = exports.bind = exports.promiseBind = exports.asyncBind = exports.hideMutationWarnings = exports._recorder = exports.types = exports.allDownstream = exports.upstream = exports.skipFirst = exports.Ev = exports._depMgr = exports.DepMgr = undefined;
 
   var _underscore2 = _interopRequireDefault(_underscore);
 
@@ -593,8 +593,6 @@
     });
   };
 
-  var awaitBind = exports.awaitBind = function awaitBind(init, f) {};
-
   var bind = exports.bind = function bind(f) {
     return asyncBind(null, function () {
       return this.done(this.record(f));
@@ -844,13 +842,18 @@
       var _this10 = _possibleConstructorReturn(this, (DepCell.__proto__ || Object.getPrototypeOf(DepCell)).call(this, init != null ? init : null));
 
       _this10.body = body != null ? body : null;
-      _this10.onStatusChange = _this10._mkEv(function () {
-        return INIT;
-      });
       _this10.refreshing = false;
       _this10.nestedBinds = [];
       _this10.cleanups = [];
       _this10.upstreamEvents = new Set();
+
+      _this10._rawStatus = INIT;
+      _this10.onStatusChange = _this10._mkEv(function () {
+        return _this10._rawStatus;
+      });
+      autoSub(_this10.onStatusChange, function (status) {
+        return _this10._rawStatus = status;
+      });
       _this10._statusCell = null; // cannot immediately initialize because infinite loop
       return _this10;
     }
@@ -866,6 +869,7 @@
         var _this11 = this;
 
         if (!this.refreshing) {
+          this.onStatusChange.pub(REFRESHING);
           var old = this._base;
           // TODO we are immediately disconnecting; something that disconnects upon
           // completion may have better semantics for asynchronous operations:
@@ -943,11 +947,11 @@
             }
 
             r = (_body = this.body).call.apply(_body, [env].concat(args));
+            this.onStatusChange.pub(LOADED);
           } catch (e) {
             this.onStatusChange.pub(ERROR);
             throw e;
           }
-          this.onStatusChange.pub(LOADED);
           return r;
         }
       }

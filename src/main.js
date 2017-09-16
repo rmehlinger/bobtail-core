@@ -281,10 +281,6 @@ export let promiseBind = (init, f, catcher=() => null) => asyncBind(
   }
 );
 
-export let awaitBind = (init, f) => {
-
-};
-
 export let bind = f => asyncBind(null, function() { return this.done(this.record(f)); });
 
 export let lagBind = function(lag, init, f) {
@@ -408,11 +404,14 @@ export class DepCell extends ObsCell {
   constructor(body, init) {
     super(init != null ? init : null);
     this.body = body != null ? body : null;
-    this.onStatusChange = this._mkEv(() => INIT);
     this.refreshing = false;
     this.nestedBinds = [];
     this.cleanups = [];
     this.upstreamEvents = new Set();
+
+    this._rawStatus = INIT;
+    this.onStatusChange = this._mkEv(() => this._rawStatus);
+    autoSub(this.onStatusChange, (status) => this._rawStatus = status);
     this._statusCell = null; // cannot immediately initialize because infinite loop
   }
   get status() {
@@ -426,6 +425,7 @@ export class DepCell extends ObsCell {
   }
   _refreshArgs(...args) {
     if(!this.refreshing) {
+      this.onStatusChange.pub(REFRESHING);
       let old = this._base;
       // TODO we are immediately disconnecting; something that disconnects upon
       // completion may have better semantics for asynchronous operations:
@@ -497,12 +497,12 @@ export class DepCell extends ObsCell {
       let r;
       try {
         r = this.body.call(env, ...args);
+        this.onStatusChange.pub(LOADED);
       }
       catch(e) {
         this.onStatusChange.pub(ERROR);
         throw(e);
       }
-      this.onStatusChange.pub(LOADED);
       return r;
     }
   }
